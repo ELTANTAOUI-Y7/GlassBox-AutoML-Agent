@@ -101,11 +101,16 @@ Inspector.run(data)                     Cleaner.run(data)
 ## 3. Installation
 
 ```bash
+# Create and activate a virtual environment
+python3 -m venv venv
+source venv/bin/activate   # macOS / Linux
+
+# Install the package + dev dependencies
 pip install -e ".[dev]"
 
 # Run demos
-python demo_eda.py
-python demo_preprocessing.py
+python3 demo_eda.py
+python3 demo_preprocessing.py
 
 # Run tests
 pytest
