@@ -2,9 +2,15 @@
 requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+packages = ["glassbox", "glassbox.eda", "glassbox.preprocessing"]
+
+[tool.setuptools.package-dir]
+"glassbox" = "."
+
 [project]
 name = "glassbox-automl"
-version = "0.1.0"
+version = "0.2.0"
 description = "A transparent, scratch-built Automated Machine Learning library (NumPy-only)."
 readme = "README.md"
 license = {text = "MIT"}
