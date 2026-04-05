@@ -1,4 +1,4 @@
-# GlassBox-AutoML · Module I: Automated EDA (The Inspector)
+# GlassBox-AutoML · Module I: Automated EDA + Module II: Preprocessing
 
 ## Complete Technical Documentation
 
@@ -9,108 +9,91 @@
 1. [Overview](#1-overview)
 2. [Architecture](#2-architecture)
 3. [Installation](#3-installation)
-4. [Module Reference](#4-module-reference)
-   - 4.1 [Math Utilities (`math_utils`)](#41-math-utilities)
-   - 4.2 [Auto-Typer (`auto_typer`)](#42-auto-typer)
-   - 4.3 [Statistical Profiler (`stats`)](#43-statistical-profiler)
-   - 4.4 [Correlation Analyzer (`correlation`)](#44-correlation-analyzer)
-   - 4.5 [Outlier Detector (`outliers`)](#45-outlier-detector)
-   - 4.6 [Inspector Orchestrator (`inspector`)](#46-inspector-orchestrator)
-5. [Usage Examples](#5-usage-examples)
-6. [JSON Report Schema](#6-json-report-schema)
-7. [Testing](#7-testing)
-8. [Design Decisions](#8-design-decisions)
-9. [IronClaw Agent Integration](#9-ironclaw-agent-integration)
+4. [Module I — EDA (The Inspector)](#4-module-i--eda-the-inspector)
+   - 4.1 [Math Utilities](#41-math-utilities)
+   - 4.2 [Auto-Typer](#42-auto-typer)
+   - 4.3 [Statistical Profiler](#43-statistical-profiler)
+   - 4.4 [Correlation Analyzer](#44-correlation-analyzer)
+   - 4.5 [Outlier Detector](#45-outlier-detector)
+   - 4.6 [Inspector Orchestrator](#46-inspector-orchestrator)
+5. [Module II — Preprocessing (The Cleaner)](#5-module-ii--preprocessing-the-cleaner)
+   - 5.1 [Simple Imputer](#51-simple-imputer)
+   - 5.2 [Scalers](#52-scalers)
+   - 5.3 [Encoders](#53-encoders)
+   - 5.4 [Cleaner Orchestrator](#54-cleaner-orchestrator)
+6. [Usage Examples](#6-usage-examples)
+7. [JSON Report Schemas](#7-json-report-schemas)
+8. [Testing](#8-testing)
+9. [Design Decisions](#9-design-decisions)
+10. [IronClaw Agent Integration](#10-ironclaw-agent-integration)
 
 ---
 
 ## 1. Overview
 
-**The Inspector** is Module I of the GlassBox-AutoML library. It performs a
-**non-destructive, automated audit** of raw datasets, producing a comprehensive
-JSON report that can be consumed by an IronClaw (NEAR AI) agent or any
-downstream pipeline.
+**GlassBox-AutoML** is a NumPy-only, white-box automated machine learning library.
+Every formula is implemented from scratch — no Scikit-Learn, no Pandas.
+
+| Module | Class | Role |
+| ------ | ----- | ---- |
+| **Module I** | `Inspector` | Non-destructive audit of raw data → JSON EDA report |
+| **Module II** | `Cleaner` | Automated preprocessing → cleaned array + JSON audit trail |
 
 ### Key Principles
 
-| Principle            | Implementation                                       |
-| -------------------- | ---------------------------------------------------- |
-| Zero-dependency core | Only NumPy — no Scikit-Learn, Pandas, or SciPy       |
-| Transparency         | Every formula is manually implemented and documented  |
-| Non-destructive      | The original data is **never** modified               |
-| WASM-ready           | Pure Python + NumPy — no C extensions beyond NumPy    |
-| JSON-first output    | Every result serialises to a plain JSON object        |
+| Principle | Implementation |
+| --------- | -------------- |
+| Zero-dependency core | Only NumPy — no Scikit-Learn, Pandas, or SciPy |
+| Transparency | Every formula is manually implemented and documented |
+| Non-destructive | Original data is **never** modified |
+| WASM-ready | Pure Python + NumPy — no C extensions beyond NumPy |
+| JSON-first output | Every result serialises to a plain JSON object |
 
-### What the Inspector Computes
+### Full Pipeline
 
 ```
-Raw Data ──► Auto-Typing ──► Statistical Profiling ──► Correlation ──► Outlier Detection ──► JSON Report
+Raw Data
+  ──► Inspector (EDA) ──► EDAReport (JSON)
+  ──► Cleaner (Preprocessing) ──► Cleaned Array + PreprocessingReport (JSON)
 ```
-
-1. **Auto-Typing** — classifies columns as Numerical, Categorical, or Boolean.
-2. **Statistical Profiling** — mean, median, mode, std, skewness, kurtosis, percentiles.
-3. **Pearson Correlation** — full matrix + collinearity warnings.
-4. **IQR Outlier Detection** — flags/caps points beyond 1.5 × IQR fences.
 
 ---
 
 ## 2. Architecture
 
 ```
-glassbox/
-├── __init__.py              # Package root — exports Inspector
+GlassBox-AutoML-Agent/
 ├── eda/
-│   ├── __init__.py          # EDA sub-package
-│   ├── math_utils.py        # Low-level statistical primitives
-│   ├── auto_typer.py        # Column type inference engine
+│   ├── math_utils.py        # Statistical primitives (mean, std, skew, …)
+│   ├── auto_typer.py        # Column type inference (numerical/categorical/boolean)
 │   ├── stats.py             # Descriptive statistics profiler
 │   ├── correlation.py       # Pearson correlation matrix
 │   ├── outliers.py          # IQR-based outlier detection
-│   └── inspector.py         # Orchestrator (chains all modules)
-tests/
-├── __init__.py
-├── test_math_utils.py       # Unit tests — math primitives
-├── test_auto_typer.py       # Unit tests — type detection
-├── test_stats.py            # Unit tests — stat profiler
-├── test_correlation.py      # Unit tests — correlation
-├── test_outliers.py         # Unit tests — outlier detection
-└── test_inspector.py        # Integration tests — full pipeline
-demo_eda.py                  # End-to-end demonstration script
-pyproject.toml               # Build & dependency configuration
-README.md                    # This documentation
+│   └── inspector.py         # EDA orchestrator → EDAReport
+├── preprocessing/
+│   ├── imputer.py           # SimpleImputer (mean/median/mode/constant)
+│   ├── scalers.py           # MinMaxScaler + StandardScaler
+│   ├── encoders.py          # OneHotEncoder + LabelEncoder
+│   └── cleaner.py           # Preprocessing orchestrator → CleanerResult
+├── demo_eda.py              # End-to-end EDA demo
+├── demo_preprocessing.py    # End-to-end preprocessing demo
+└── pyproject.toml
 ```
 
-### Data Flow Diagram
+### Data Flow
 
 ```
-                    ┌──────────────────────────────────────────┐
-                    │            Inspector.run(data)            │
-                    └──────────┬───────────────────────────────┘
-                               │
-                    ┌──────────▼───────────┐
-                    │     AutoTyper        │
-                    │  detect(data, hdrs)  │
-                    └──────────┬───────────┘
-                               │ List[ColumnTypeInfo]
-                    ┌──────────▼───────────┐
-                    │    StatProfiler      │
-                    │  profile(data, ...)  │──── uses math_utils.*
-                    └──────────┬───────────┘
-                               │ List[ColumnStats]
-                    ┌──────────▼───────────┐
-                    │ CorrelationAnalyzer   │
-                    │  analyze(data, ...)  │──── uses _pearson_r()
-                    └──────────┬───────────┘
-                               │ CorrelationResult
-                    ┌──────────▼───────────┐
-                    │  OutlierDetector     │
-                    │  detect(data, ...)   │──── uses manual_percentile()
-                    └──────────┬───────────┘
-                               │ List[OutlierReport]
-                    ┌──────────▼───────────┐
-                    │      EDAReport       │
-                    │     .to_json()       │
-                    └──────────────────────┘
+Inspector.run(data)                     Cleaner.run(data)
+      │                                       │
+  AutoTyper ──► type_map ────────────► AutoTyper (or reuse type_map)
+      │                                       │
+  StatProfiler                         SimpleImputer
+      │                                       │
+  CorrelationAnalyzer                  MinMaxScaler / StandardScaler
+      │                                       │
+  OutlierDetector                      OneHotEncoder / LabelEncoder
+      │                                       │
+  EDAReport.to_json()              CleanerResult (data + PreprocessingReport)
 ```
 
 ---
@@ -118,252 +101,113 @@ README.md                    # This documentation
 ## 3. Installation
 
 ```bash
-# Clone or copy the project
-cd Part_EDA_Ai
-
-# Install in development mode
 pip install -e ".[dev]"
+
+# Run demos
+python demo_eda.py
+python demo_preprocessing.py
 
 # Run tests
 pytest
-
-# Run demo
-python demo_eda.py
 ```
 
-### Requirements
-
-- **Python** ≥ 3.11
-- **NumPy** ≥ 1.24
-- **pytest** ≥ 7.0 (dev only)
+**Requirements:** Python ≥ 3.11 · NumPy ≥ 1.24 · pytest ≥ 7.0 (dev)
 
 ---
 
-## 4. Module Reference
+## 4. Module I — EDA (The Inspector)
+
+The Inspector performs a **non-destructive, automated audit** of raw data and
+produces a comprehensive JSON report covering types, statistics, correlation,
+and outliers.
 
 ### 4.1 Math Utilities
 
-**File:** `glassbox/eda/math_utils.py`
+**File:** `eda/math_utils.py`
 
-Every function operates on 1-D NumPy arrays, ignores NaN values, and
-implements the formula from scratch (no `np.mean`, `np.std`, etc.).
+All functions operate on 1-D NumPy arrays, ignore NaN, and are implemented
+from scratch (no `np.mean`, `np.std`, etc.).
 
-#### `manual_mean(arr) → float`
-
-$$\bar{x} = \frac{1}{n}\sum_{i=1}^{n} x_i$$
-
-| Parameter | Type         | Description               |
-| --------- | ------------ | ------------------------- |
-| `arr`     | `np.ndarray` | 1-D numeric array         |
-| **Return**| `float`      | Arithmetic mean           |
-
-#### `manual_median(arr) → float`
-
-Returns the middle value of the sorted array. For even-length arrays,
-returns the average of the two central values.
-
-#### `manual_mode(arr) → object`
-
-Returns the most frequent value. Ties are broken by returning the smallest
-value. Works for both numeric and string arrays.
-
-#### `manual_variance(arr, *, ddof=0) → float`
-
-$$\sigma^2 = \frac{1}{n - \text{ddof}} \sum_{i=1}^{n}(x_i - \bar{x})^2$$
-
-| Parameter | Type  | Description                                |
-| --------- | ----- | ------------------------------------------ |
-| `ddof`    | `int` | 0 = population variance, 1 = sample (Bessel) |
-
-#### `manual_std(arr, *, ddof=0) → float`
-
-$$\sigma = \sqrt{\text{Var}(x)}$$
-
-#### `manual_skewness(arr) → float`
-
-Adjusted Fisher–Pearson skewness coefficient:
-
-$$G_1 = \frac{n}{(n-1)(n-2)} \sum_{i=1}^{n} \left(\frac{x_i - \bar{x}}{s}\right)^3$$
-
-| Value       | Interpretation        |
-| ----------- | --------------------- |
-| $G_1 > 0$   | Right-skewed (tail right) |
-| $G_1 = 0$   | Symmetric              |
-| $G_1 < 0$   | Left-skewed (tail left)  |
-
-Requires at least **3** data points.
-
-#### `manual_kurtosis(arr) → float`
-
-Excess kurtosis (Fisher's definition — normal distribution = 0):
-
-$$K = \frac{n(n+1)}{(n-1)(n-2)(n-3)} \sum\left(\frac{x_i-\bar{x}}{s}\right)^4 - \frac{3(n-1)^2}{(n-2)(n-3)}$$
-
-| Value    | Interpretation                      |
-| -------- | ----------------------------------- |
-| $K > 0$  | Leptokurtic (heavy tails, peaked)   |
-| $K = 0$  | Mesokurtic (normal-like)            |
-| $K < 0$  | Platykurtic (light tails, flat)     |
-
-Requires at least **4** data points.
-
-#### `manual_percentile(arr, q) → float`
-
-Linear interpolation percentile matching NumPy's default method.
-
-| Parameter | Type    | Description                  |
-| --------- | ------- | ---------------------------- |
-| `q`       | `float` | Percentile in `[0, 100]`    |
+| Function | Formula | Notes |
+| -------- | ------- | ----- |
+| `manual_mean(arr)` | $\bar{x} = \frac{1}{n}\sum x_i$ | |
+| `manual_median(arr)` | Middle value (linear interp for even-length) | |
+| `manual_mode(arr)` | Most frequent value; ties → smallest | Works on strings |
+| `manual_variance(arr, ddof=0)` | $\sigma^2 = \frac{1}{n-\text{ddof}}\sum(x_i-\bar{x})^2$ | |
+| `manual_std(arr, ddof=0)` | $\sqrt{\text{Var}(x)}$ | |
+| `manual_skewness(arr)` | Adjusted Fisher–Pearson $G_1$ | Requires ≥ 3 points |
+| `manual_kurtosis(arr)` | Excess (Fisher) kurtosis | Requires ≥ 4 points |
+| `manual_percentile(arr, q)` | Linear interpolation | Matches NumPy default |
 
 ---
 
 ### 4.2 Auto-Typer
 
-**File:** `glassbox/eda/auto_typer.py`
+**File:** `eda/auto_typer.py`
 
 Classifies each column into one of three semantic types:
 
-| Type            | Detection Rule                                                     |
-| --------------- | ------------------------------------------------------------------ |
-| **Numerical**   | Column can be cast to `float64` and has sufficient cardinality     |
-| **Categorical** | String/object column, OR low-cardinality numeric (< 5 % unique)   |
-| **Boolean**     | Exactly 2 unique non-NaN values that match boolean patterns        |
-
-#### Class: `AutoTyper`
+| Type | Detection Rule |
+| ---- | -------------- |
+| **Numerical** | Castable to `float64` with sufficient cardinality |
+| **Categorical** | String/object, or low-cardinality numeric (< 5 % unique) |
+| **Boolean** | Exactly 2 unique non-NaN values matching boolean patterns |
 
 ```python
 AutoTyper(
-    categorical_cardinality_ratio=0.05,  # Threshold for numeric → categorical
-    categorical_max_unique=20,           # Max unique values for reclassification
-    bool_values=None,                    # Extra boolean string literals
+    categorical_cardinality_ratio=0.05,
+    categorical_max_unique=20,
+    bool_values=None,  # extra boolean literals
 )
 ```
 
-**Method:** `detect(data, headers=None) → List[ColumnTypeInfo]`
+**Method:** `detect(data, headers) → List[ColumnTypeInfo]`
 
-#### Dataclass: `ColumnTypeInfo`
-
-| Field           | Type   | Description                           |
-| --------------- | ------ | ------------------------------------- |
-| `name`          | `str`  | Column header                        |
-| `inferred_type` | `str`  | `"numerical"`, `"categorical"`, `"boolean"` |
-| `dtype`         | `str`  | Raw NumPy dtype string               |
-| `n_unique`      | `int`  | Unique non-NaN values                |
-| `n_missing`     | `int`  | NaN / None count                     |
-| `sample_values` | `list` | Up to 5 example values               |
-
-#### Boolean Recognition
-
-Built-in patterns (case-insensitive):
-
-- **Truthy:** `true`, `yes`, `1`, `t`, `y`, `on`
-- **Falsy:** `false`, `no`, `0`, `f`, `n`, `off`
-- Numeric: `0` / `1`, `0.0` / `1.0`
+**`ColumnTypeInfo` fields:** `name`, `inferred_type`, `dtype`, `n_unique`, `n_missing`, `sample_values`
 
 ---
 
 ### 4.3 Statistical Profiler
 
-**File:** `glassbox/eda/stats.py`
+**File:** `eda/stats.py`
 
-Computes 16 descriptive statistics for every numeric column.
-
-#### Class: `StatProfiler`
+Computes 16 descriptive statistics per numeric column.
 
 ```python
 StatProfiler(numeric_types={"numerical"})
 ```
 
-**Method:** `profile(data, headers=None, type_map=None) → List[ColumnStats]`
+**Method:** `profile(data, headers, type_map) → List[ColumnStats]`
 
-| Parameter   | Description                                              |
-| ----------- | -------------------------------------------------------- |
-| `type_map`  | `{col_name: inferred_type}` — filters non-numeric cols  |
-
-#### Dataclass: `ColumnStats`
-
-| Field      | Type           | Description                        |
-| ---------- | -------------- | ---------------------------------- |
-| `name`     | `str`          | Column name                        |
-| `count`    | `int`          | Non-NaN values                     |
-| `missing`  | `int`          | NaN count                          |
-| `mean`     | `float | None` | Arithmetic mean                    |
-| `median`   | `float | None` | Median                             |
-| `mode`     | `Any | None`   | Most frequent value                |
-| `std`      | `float | None` | Sample standard deviation (ddof=1) |
-| `variance` | `float | None` | Sample variance (ddof=1)           |
-| `min`      | `float | None` | Minimum                            |
-| `max`      | `float | None` | Maximum                            |
-| `range`    | `float | None` | max − min                          |
-| `q1`       | `float | None` | 25th percentile                    |
-| `q3`       | `float | None` | 75th percentile                    |
-| `iqr`      | `float | None` | Interquartile range                |
-| `skewness` | `float | None` | Fisher's adjusted skewness         |
-| `kurtosis` | `float | None` | Excess (Fisher) kurtosis           |
-
-Statistics are `None` when insufficient data exists (e.g., skew needs ≥ 3 points).
+Fields: `name`, `count`, `missing`, `mean`, `median`, `mode`, `std`, `variance`, `min`, `max`, `range`, `q1`, `q3`, `iqr`, `skewness`, `kurtosis`
 
 ---
 
 ### 4.4 Correlation Analyzer
 
-**File:** `glassbox/eda/correlation.py`
+**File:** `eda/correlation.py`
 
-Computes the full **Pearson Correlation Matrix** from scratch.
+Computes the full Pearson correlation matrix from scratch using pairwise complete observations.
 
 $$r_{xy} = \frac{\sum(x_i - \bar{x})(y_i - \bar{y})}{\sqrt{\sum(x_i - \bar{x})^2} \cdot \sqrt{\sum(y_i - \bar{y})^2}}$$
-
-#### Class: `CorrelationAnalyzer`
 
 ```python
 CorrelationAnalyzer(threshold=0.90)
 ```
 
-**Method:** `analyze(data, headers=None, numeric_indices=None) → CorrelationResult`
+**Method:** `analyze(data, headers, numeric_indices) → CorrelationResult`
 
-#### Dataclass: `CorrelationResult`
-
-| Field          | Type                    | Description                              |
-| -------------- | ----------------------- | ---------------------------------------- |
-| `matrix`       | `np.ndarray (k × k)`   | Full Pearson correlation matrix          |
-| `column_names` | `List[str]`             | Column labels for each axis              |
-| `high_pairs`   | `List[CorrelationPair]` | Pairs with $|r| \geq$ threshold          |
-
-#### Dataclass: `CorrelationPair`
-
-| Field   | Type    | Description                |
-| ------- | ------- | -------------------------- |
-| `col_a` | `str`   | First column name          |
-| `col_b` | `str`   | Second column name         |
-| `r`     | `float` | Pearson correlation value  |
-
-#### NaN Handling
-
-For each pair $(i, j)$, only rows where **both** values are non-NaN are used
-(pairwise complete observations).
-
-#### Collinearity Warning
-
-When $|r| \geq \text{threshold}$ (default 0.90), the pair is flagged. The Inspector
-generates a human-readable warning recommending removal of one feature.
+Generates a collinearity warning for any pair with $|r| \geq$ threshold.
 
 ---
 
 ### 4.5 Outlier Detector
 
-**File:** `glassbox/eda/outliers.py`
+**File:** `eda/outliers.py`
 
-Uses the **Interquartile Range (IQR)** method:
+Uses Tukey's IQR rule ($k = 1.5$ by default):
 
-$$\text{Lower Fence} = Q_1 - k \cdot IQR$$
-$$\text{Upper Fence} = Q_3 + k \cdot IQR$$
-
-where $k = 1.5$ (Tukey's rule) by default.
-
-A data point $x$ is an **outlier** if:
-$$x < Q_1 - k \cdot IQR \quad \text{or} \quad x > Q_3 + k \cdot IQR$$
-
-#### Class: `OutlierDetector`
+$$\text{Lower Fence} = Q_1 - k \cdot IQR \qquad \text{Upper Fence} = Q_3 + k \cdot IQR$$
 
 ```python
 OutlierDetector(k=1.5)
@@ -372,323 +216,452 @@ OutlierDetector(k=1.5)
 | Method | Description | Destructive? |
 | ------ | ----------- | ------------ |
 | `detect(data, headers, numeric_indices)` | Flag outliers per column | No |
-| `cap(data, headers, numeric_indices)` | Return clipped **copy** | No (copy) |
-
-#### Dataclass: `OutlierReport`
-
-| Field             | Type        | Description                          |
-| ----------------- | ----------- | ------------------------------------ |
-| `name`            | `str`       | Column name                          |
-| `q1`              | `float`     | 25th percentile                      |
-| `q3`              | `float`     | 75th percentile                      |
-| `iqr`             | `float`     | Q3 − Q1                             |
-| `lower_fence`     | `float`     | Q1 − k × IQR                        |
-| `upper_fence`     | `float`     | Q3 + k × IQR                        |
-| `n_outliers_low`  | `int`       | Count below lower fence              |
-| `n_outliers_high` | `int`       | Count above upper fence              |
-| `n_total`         | `int`       | Total non-NaN values                 |
-| `outlier_indices` | `List[int]` | Row indices of outlier values        |
-| `outlier_pct`     | `float`     | Percentage of values that are outliers |
+| `cap(data, headers, numeric_indices)` | Return clipped copy | No (copy) |
 
 ---
 
 ### 4.6 Inspector Orchestrator
 
-**File:** `glassbox/eda/inspector.py`
-
-The **Inspector** is the top-level entry point. It chains all sub-modules and
-returns a unified `EDAReport`.
-
-#### Class: `Inspector`
+**File:** `eda/inspector.py`
 
 ```python
-from glassbox import Inspector
+from eda.inspector import Inspector, InspectorConfig
 
-inspector = Inspector(config=InspectorConfig(...))
-report = inspector.run(data, headers)
-json_str = report.to_json()
+config = InspectorConfig(correlation_threshold=0.9, outlier_k=1.5, cap_outliers=False)
+report = Inspector(config).run(data, headers)
+print(report.to_json())
 ```
 
-#### Dataclass: `InspectorConfig`
-
-| Parameter                       | Default | Description                              |
-| ------------------------------- | ------- | ---------------------------------------- |
-| `categorical_cardinality_ratio` | `0.05`  | Numeric → categorical threshold          |
-| `categorical_max_unique`        | `20`    | Max unique for categorical reclassification |
-| `correlation_threshold`         | `0.90`  | Collinearity flag threshold              |
-| `outlier_k`                     | `1.5`   | IQR fence multiplier                     |
-| `cap_outliers`                  | `False` | Include capped data in report            |
-
-#### Pipeline Steps
-
+**Pipeline steps:**
 ```
 Step 1: AutoTyper.detect()      → column_types, type_map
-Step 2: StatProfiler.profile()  → statistics (numeric cols only)
+Step 2: StatProfiler.profile()  → statistics
 Step 3: CorrelationAnalyzer()   → correlation matrix + high pairs
-Step 4: OutlierDetector()       → outlier reports per numeric col
+Step 4: OutlierDetector()       → outlier reports
 Step 5: Generate warnings       → collinearity, outlier %, missing values
 Step 6: Assemble EDAReport      → .to_json()
 ```
 
-#### Automatic Warnings
-
-The Inspector generates warnings for:
-- **Collinearity:** Pairs with $|r| \geq$ threshold
-- **Outlier density:** Columns with > 5 % outliers
-- **Missing values:** Any column with NaN values (count + percentage)
+**Automatic warnings:** collinearity ($|r| \geq$ threshold), outlier density (> 5 %), missing values.
 
 ---
 
-## 5. Usage Examples
+## 5. Module II — Preprocessing (The Cleaner)
 
-### Minimal Example
+The Cleaner transforms raw data into a model-ready array. It reuses the EDA
+`AutoTyper` so no type detection is duplicated when the Inspector has already run.
+
+### 5.1 Simple Imputer
+
+**File:** `preprocessing/imputer.py`
+
+Fills missing values using column statistics. Follows the `fit() / transform() / fit_transform()` transformer pattern.
+
+#### Strategies
+
+| Strategy | Numerical | Categorical / Boolean |
+| -------- | --------- | --------------------- |
+| `"mean"` | Arithmetic mean | Falls back to mode |
+| `"median"` | Median | Falls back to mode |
+| `"mode"` | Most frequent value | Most frequent value |
+| `"constant"` | User-supplied `fill_value` | User-supplied `fill_value` |
+
+#### Class: `SimpleImputer`
+
+```python
+SimpleImputer(strategy="mean", fill_value=None)
+```
+
+| Method | Description |
+| ------ | ----------- |
+| `fit(data, headers, type_map)` | Compute per-column fill values |
+| `transform(data, headers)` | Return a filled copy + `List[ImputationSummary]` |
+| `fit_transform(data, headers, type_map)` | Fit then transform in one step |
+
+#### Dataclass: `ImputationSummary`
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `column` | `str` | Column name |
+| `strategy` | `str` | Strategy used |
+| `fill_value` | `Any` | Value inserted |
+| `n_filled` | `int` | Cells filled |
+
+---
+
+### 5.2 Scalers
+
+**File:** `preprocessing/scalers.py`
+
+Both scalers only act on `numerical` columns and return a **copy** of the data.
+They use `manual_mean` and `manual_std` from `eda/math_utils.py`.
+
+#### MinMaxScaler
+
+Scales to a fixed range `[low, high]` (default `[0, 1]`):
+
+$$x_{\text{scaled}} = \frac{x - x_{\min}}{x_{\max} - x_{\min}} \times (\text{high} - \text{low}) + \text{low}$$
+
+Constant columns (range = 0) are set to `low` to avoid division by zero.
+
+```python
+MinMaxScaler(feature_range=(0.0, 1.0))
+```
+
+#### StandardScaler
+
+Standardises to zero mean and unit variance (sample std, `ddof=1`):
+
+$$x_{\text{scaled}} = \frac{x - \bar{x}}{\sigma}$$
+
+Constant columns (std = 0) are output as `0.0`.
+
+```python
+StandardScaler()
+```
+
+Both follow `fit() / transform() / fit_transform()`.
+
+#### Dataclass: `ScalerSummary`
+
+| Field | MinMax | Standard |
+| ----- | ------ | -------- |
+| `column` | column name | column name |
+| `scaler_type` | `"minmax"` | `"standard"` |
+| `param_a` | `x_min` | mean (μ) |
+| `param_b` | `x_max` | std (σ) |
+
+---
+
+### 5.3 Encoders
+
+**File:** `preprocessing/encoders.py`
+
+Both encoders target `categorical` columns by default, return a **copy**, and
+follow the transformer pattern.
+
+#### OneHotEncoder
+
+Creates one binary indicator column per unique category, removing the original.
+Categories are sorted lexicographically for deterministic output.
+Unknown categories at transform-time become all-zero rows.
+
+```python
+OneHotEncoder(drop_first=False, target_types={"categorical"})
+```
+
+```
+dept = ["Eng", "HR", "Eng"]
+→ dept_Eng = [1, 0, 1],  dept_HR = [0, 1, 0]
+```
+
+| Method | Returns |
+| ------ | ------- |
+| `fit(data, headers, type_map)` | `self` |
+| `transform(data, headers)` | `(new_data, new_headers, List[EncoderSummary])` |
+| `fit_transform(...)` | same as transform |
+| `get_feature_names()` | all indicator column names |
+
+#### LabelEncoder
+
+Maps each category to a non-negative integer (alphabetical order, 0-based).
+Unknown categories at transform-time are mapped to `-1`.
+
+```python
+LabelEncoder(target_types={"categorical"})
+```
+
+```
+size = ["S", "M", "L", "XL"]  →  [2, 1, 0, 3]   (L=0, M=1, S=2, XL=3)
+```
+
+| Method | Returns |
+| ------ | ------- |
+| `fit(data, headers, type_map)` | `self` |
+| `transform(data, headers)` | `(new_data, List[EncoderSummary])` |
+| `fit_transform(...)` | same as transform |
+| `get_mapping(col_name)` | `{category: int}` dict |
+
+#### Dataclass: `EncoderSummary`
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `column` | `str` | Original column name |
+| `encoder_type` | `str` | `"onehot"` or `"label"` |
+| `categories` | `List[str]` | Unique categories (sorted) |
+| `output_columns` | `List[str]` | Resulting column names |
+| `mapping` | `dict \| None` | Integer mapping (LabelEncoder only) |
+
+---
+
+### 5.4 Cleaner Orchestrator
+
+**File:** `preprocessing/cleaner.py`
+
+The Cleaner chains all preprocessing steps and returns a `CleanerResult`.
+
+#### Class: `CleanerConfig`
+
+| Parameter | Default | Description |
+| --------- | ------- | ----------- |
+| `imputer_strategy` | `"mean"` | `"mean"`, `"median"`, `"mode"`, `"constant"` |
+| `imputer_fill_value` | `None` | Used when strategy is `"constant"` |
+| `scale_numerical` | `True` | Whether to scale numerical columns |
+| `scaler_type` | `"standard"` | `"standard"` or `"minmax"` |
+| `minmax_range` | `(0.0, 1.0)` | Output range for MinMaxScaler |
+| `encode_categorical` | `True` | Whether to encode categorical columns |
+| `encoder_type` | `"onehot"` | `"onehot"` or `"label"` |
+| `drop_first_ohe` | `False` | Drop first OHE indicator (avoid dummy trap) |
+
+#### Class: `Cleaner`
+
+```python
+from preprocessing.cleaner import Cleaner, CleanerConfig
+
+config = CleanerConfig(scaler_type="minmax", encoder_type="onehot")
+cleaner = Cleaner(config)
+result = cleaner.run(data, headers, type_map=type_map)  # type_map from Inspector (optional)
+```
+
+**`run(data, headers, type_map) → CleanerResult`**
+
+Pass `type_map` from the EDA Inspector to avoid running AutoTyper twice.
+
+**`fit_transform(data, headers, type_map) → (data, headers, report)`**
+
+Convenience alias that unpacks `CleanerResult`.
+
+#### Pipeline Steps
+
+```
+Step 1: AutoTyper.detect()          → column_types, type_map
+Step 2: SimpleImputer.fit_transform() → fill missing values
+Step 3: Scaler.fit_transform()       → normalise numerical columns
+Step 4: Encoder.fit_transform()      → encode categorical columns
+Step 5: Assemble PreprocessingReport → .to_json()
+```
+
+#### Dataclass: `CleanerResult`
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `data` | `np.ndarray` | Cleaned array |
+| `headers` | `List[str]` | Column names (may differ from input after OHE) |
+| `report` | `PreprocessingReport` | Full audit trail |
+
+#### Dataclass: `PreprocessingReport`
+
+Fields: `n_rows`, `n_cols_in`, `n_cols_out`, `elapsed_seconds`, `headers_in`, `headers_out`, `type_summary`, `column_types`, `imputation`, `scaling`, `encoding`, `steps_applied`, `warnings`
+
+Methods: `to_dict()`, `to_json()`
+
+**Automatic warnings:** missing values (will be imputed), constant columns (zero std / zero range), all-missing columns (imputation skipped).
+
+---
+
+## 6. Usage Examples
+
+### Minimal EDA
 
 ```python
 import numpy as np
-from glassbox import Inspector
+from eda.inspector import Inspector
 
-data = np.array([
-    [25, 50000],
-    [30, 60000],
-    [35, 55000],
-    [40, 80000],
-    [50, 120000],
-], dtype=float)
-
+data = np.array([[25, 50000], [30, 60000], [35, np.nan]], dtype=object)
 report = Inspector().run(data, headers=["age", "salary"])
 print(report.to_json())
 ```
 
-### Mixed-Type Dataset
+### Minimal Preprocessing
 
 ```python
 import numpy as np
-from glassbox.eda.inspector import Inspector, InspectorConfig
+from preprocessing.cleaner import Cleaner, CleanerConfig
 
-# Object array for mixed types
 data = np.array([
-    [25,  "Engineering", "yes", 8.5],
-    [30,  "Sales",       "no",  6.2],
-    [35,  "HR",          "yes", 7.8],
-    [40,  "Engineering", "no",  9.1],
-    [50,  "Marketing",   "yes", 5.5],
+    [25, "Engineering", "yes", 8.5],
+    [30, "Sales",       None,  6.2],
+    [35, "HR",          "yes", np.nan],
 ], dtype=object)
+headers = ["age", "dept", "manager", "rating"]
 
-config = InspectorConfig(correlation_threshold=0.7, outlier_k=2.0)
-inspector = Inspector(config=config)
-report = inspector.run(data, ["age", "dept", "manager", "rating"])
+result = Cleaner().run(data, headers)
+print(result.headers)   # ['age', 'rating', 'dept_Engineering', 'dept_HR', 'dept_Sales', ...]
+```
 
-# Access structured results
-for ct in report.column_types:
-    print(f"  {ct['name']:15s} → {ct['inferred_type']}")
+### EDA → Preprocessing (reuse type_map)
+
+```python
+from eda.inspector import Inspector
+from preprocessing.cleaner import Cleaner, CleanerConfig
+
+inspector = Inspector()
+eda_report = inspector.run(data, headers)
+type_map = {ct["name"]: ct["inferred_type"] for ct in eda_report.to_dict()["column_types"]}
+
+config = CleanerConfig(
+    imputer_strategy="mean",
+    scaler_type="standard",
+    encoder_type="onehot",
+)
+result = Cleaner(config).run(data, headers, type_map=type_map)
+print(result.to_json())
+```
+
+### MinMax + Label Encoding
+
+```python
+config = CleanerConfig(
+    imputer_strategy="median",
+    scaler_type="minmax",
+    minmax_range=(0.0, 1.0),
+    encoder_type="label",
+)
+result = Cleaner(config).run(data, headers)
+
+for enc in result.report.encoding:
+    print(f"{enc['column']}: {enc['mapping']}")
 ```
 
 ### Individual Module Usage
 
 ```python
-from glassbox.eda.auto_typer import AutoTyper
-from glassbox.eda.stats import StatProfiler
-from glassbox.eda.correlation import CorrelationAnalyzer
-from glassbox.eda.outliers import OutlierDetector
+from preprocessing.imputer import SimpleImputer
+from preprocessing.scalers import MinMaxScaler, StandardScaler
+from preprocessing.encoders import OneHotEncoder, LabelEncoder
 
-# 1. Type detection only
-typer = AutoTyper()
-types = typer.detect(data, headers)
+imputer = SimpleImputer(strategy="median")
+data_imp, imp_summaries = imputer.fit_transform(data, headers)
 
-# 2. Stats only
-profiler = StatProfiler()
-stats = profiler.profile(data, headers)
+scaler = StandardScaler()
+data_scaled, scale_summaries = scaler.fit_transform(data_imp, headers)
 
-# 3. Correlation only
-ca = CorrelationAnalyzer(threshold=0.85)
-corr = ca.analyze(data, headers)
-
-# 4. Outlier detection only
-det = OutlierDetector(k=1.5)
-reports = det.detect(data, headers)
-capped = det.cap(data, headers)  # non-destructive capping
+encoder = OneHotEncoder(drop_first=True)
+data_enc, new_headers, enc_summaries = encoder.fit_transform(data_scaled, headers)
 ```
 
 ---
 
-## 6. JSON Report Schema
+## 7. JSON Report Schemas
+
+### EDA Report (`EDAReport.to_json()`)
+
+```json
+{
+  "metadata": { "n_rows": 200, "n_cols": 6, "elapsed_seconds": 0.034 },
+  "type_summary": { "numerical": 3, "categorical": 1, "boolean": 2 },
+  "column_types": [
+    { "name": "age", "inferred_type": "numerical", "n_unique": 52, "n_missing": 10 }
+  ],
+  "statistics": [
+    { "name": "age", "mean": 45.26, "std": 16.23, "skewness": -0.01, "kurtosis": -1.18 }
+  ],
+  "correlation": {
+    "column_names": ["age", "salary"],
+    "matrix": [[1.0, 0.12], [0.12, 1.0]],
+    "high_correlation_pairs": []
+  },
+  "outliers": [
+    { "name": "salary", "n_outliers_low": 1, "n_outliers_high": 1, "outlier_pct": 1.0 }
+  ],
+  "warnings": ["Column 'age' has 10 missing values (5.0%)."]
+}
+```
+
+### Preprocessing Report (`PreprocessingReport.to_json()`)
 
 ```json
 {
   "metadata": {
-    "n_rows": 200,
-    "n_cols": 6,
-    "elapsed_seconds": 0.0342
+    "n_rows": 10, "n_cols_in": 5, "n_cols_out": 9, "elapsed_seconds": 0.002
   },
-  "type_summary": {
-    "numerical": 3,
-    "categorical": 1,
-    "boolean": 2
-  },
-  "column_types": [
+  "headers_in":  ["age", "salary", "dept", "manager", "rating"],
+  "headers_out": ["age", "salary", "rating", "dept_Eng", "dept_HR", "dept_Marketing",
+                  "dept_Sales", "manager_no", "manager_yes"],
+  "type_summary": { "numerical": 3, "categorical": 1, "boolean": 1 },
+  "steps_applied": [
+    "auto_typing",
+    "imputation(strategy='mean')",
+    "scaling(type='standard')",
+    "encoding(type='onehot')"
+  ],
+  "imputation": [
+    { "column": "age", "strategy": "mean", "fill_value": 38.5, "n_filled": 1 }
+  ],
+  "scaling": [
+    { "column": "age", "scaler_type": "standard", "mean": 38.5, "std": 12.34 }
+  ],
+  "encoding": [
     {
-      "name": "age",
-      "inferred_type": "numerical",
-      "dtype": "object",
-      "n_unique": 52,
-      "n_missing": 10,
-      "sample_values": [25.0, 30.0, 35.0, 40.0, 50.0]
+      "column": "dept", "encoder_type": "onehot",
+      "categories": ["Eng", "HR", "Marketing", "Sales"],
+      "output_columns": ["dept_Eng", "dept_HR", "dept_Marketing", "dept_Sales"]
     }
   ],
-  "statistics": [
-    {
-      "name": "age",
-      "count": 190,
-      "missing": 10,
-      "mean": 45.263,
-      "median": 45.0,
-      "mode": 42.0,
-      "std": 16.234,
-      "variance": 263.543,
-      "min": 18.0,
-      "max": 74.0,
-      "range": 56.0,
-      "q1": 31.0,
-      "q3": 59.0,
-      "iqr": 28.0,
-      "skewness": -0.0124,
-      "kurtosis": -1.1842
-    }
-  ],
-  "correlation": {
-    "column_names": ["age", "salary", "experience"],
-    "matrix": [
-      [1.0, 0.12, 0.95],
-      [0.12, 1.0, 0.08],
-      [0.95, 0.08, 1.0]
-    ],
-    "high_correlation_pairs": [
-      {"col_a": "age", "col_b": "experience", "r": 0.9523}
-    ]
-  },
-  "outliers": [
-    {
-      "name": "salary",
-      "q1": 62000.0,
-      "q3": 137000.0,
-      "iqr": 75000.0,
-      "lower_fence": -50500.0,
-      "upper_fence": 249500.0,
-      "n_outliers_low": 1,
-      "n_outliers_high": 1,
-      "n_outliers_total": 2,
-      "n_total": 200,
-      "outlier_pct": 1.0,
-      "outlier_indices": [0, 1]
-    }
-  ],
-  "warnings": [
-    "High correlation detected between 'age' and 'experience' (r = 0.9523). Consider removing one to reduce multicollinearity.",
-    "Column 'age' has 10 missing values (5.0%)."
-  ]
+  "warnings": ["Column 'age' has 1 missing values (10.0%) — will be imputed with strategy 'mean'."]
 }
 ```
 
 ---
 
-## 7. Testing
-
-### Running Tests
+## 8. Testing
 
 ```bash
-# All tests
-pytest
-
-# Verbose with coverage
-pytest -v --cov=glassbox --cov-report=term-missing
-
-# Single module
-pytest tests/test_math_utils.py -v
-pytest tests/test_inspector.py -v
+pytest                                      # all tests
+pytest -v --cov=. --cov-report=term-missing # with coverage
+pytest tests/test_inspector.py -v           # single file
 ```
 
-### Test Coverage Summary
-
-| Test File               | Module Tested    | Tests | Focus Areas                              |
-| ----------------------- | ---------------- | ----- | ---------------------------------------- |
-| `test_math_utils.py`   | `math_utils`     | 30+   | All 8 functions, edge cases, NaN, NumPy comparison |
-| `test_auto_typer.py`   | `auto_typer`     | 11    | Numeric/categorical/boolean detection, missing values |
-| `test_stats.py`        | `stats`          | 7     | Profiling, NaN handling, type filtering  |
-| `test_correlation.py`  | `correlation`    | 9     | Perfect/zero correlation, NaN, flagging  |
-| `test_outliers.py`     | `outliers`       | 12    | Detection, capping, indices, k values    |
-| `test_inspector.py`    | `inspector`      | 11    | Full pipeline, JSON output, config       |
-
-### Validation Strategy
-
-Each math function is tested against:
-1. **Analytical known values** (e.g., mean of [1,2,3,4,5] = 3.0)
-2. **NumPy reference** (e.g., `manual_mean(arr) ≈ np.nanmean(arr)`)
-3. **Edge cases** (empty arrays, all-NaN, single element, constant arrays)
-4. **Statistical properties** (normal kurtosis ≈ 0, symmetric skewness ≈ 0)
+| Test File | Module | Focus |
+| --------- | ------ | ----- |
+| `test_math_utils.py` | `math_utils` | All 8 functions, NaN, NumPy comparison |
+| `test_auto_typer.py` | `auto_typer` | Numeric/categorical/boolean detection |
+| `test_stats.py` | `stats` | Profiling, NaN handling |
+| `test_correlation.py` | `correlation` | Perfect/zero correlation, flagging |
+| `test_outliers.py` | `outliers` | Detection, capping, k values |
+| `test_inspector.py` | `inspector` | Full EDA pipeline, JSON output |
 
 ---
 
-## 8. Design Decisions
+## 9. Design Decisions
 
-### Why No Pandas?
+**Why NumPy only?** Pandas and Scikit-Learn are not WASM-compatible in all environments. NumPy compiles cleanly via Pyodide, keeps memory footprint minimal, and avoids hidden type-coercion surprises.
 
-Pandas is not WASM-compatible in all environments and introduces a heavy
-dependency chain. By working directly with NumPy arrays:
-- The library compiles cleanly to WASM via Pyodide.
-- Memory footprint is minimal.
-- There are no hidden type-coercion surprises.
+**Why manual statistics?** The white-box requirement means every formula must be auditable. An IronClaw agent can explain, audit, and cite each calculation step.
 
-### Why Manual Statistics?
+**Why pairwise NaN handling in correlation?** Listwise deletion can drastically shrink sample size. Pairwise complete observations preserve maximum data per pair.
 
-The project spec requires "white-box" transparency. Every formula is visible
-in the source code, making it possible for an IronClaw agent to:
-- **Explain** how a statistic was computed.
-- **Audit** the calculation step by step.
-- **Cite** the exact formula used.
+**Transformer pattern** (`fit / transform / fit_transform`): all preprocessing modules follow this pattern for pipeline composability. The EDA module is read-only so it uses `detect / profile / analyze / run` instead, but the dataclass serialisation pattern (`to_dict / to_json`) is consistent across both modules.
 
-### Why Pairwise NaN Handling in Correlation?
-
-Listwise deletion (dropping any row with any NaN) can dramatically reduce
-sample size. Pairwise complete observations preserve maximum data per pair.
-
-### Why Adjusted (Fisher) Skewness and Kurtosis?
-
-The adjusted formulas correct for sample-size bias, which is important for
-the small-to-medium datasets typical in agentic workflows.
-
-### Transformer Pattern
-
-All future modules (Phase 2+) will implement `fit()`, `transform()`, and
-`fit_transform()` methods. The EDA module is read-only, so it uses `detect()`,
-`profile()`, `analyze()`, and `run()` instead — but the dataclass output
-follows the same serialisation pattern (`to_dict()`, `to_json()`).
+**OHE column expansion:** One-Hot Encoding increases the column count. `CleanerResult.headers` always reflects the actual output columns, and `PreprocessingReport` records both `headers_in` and `headers_out` for full traceability.
 
 ---
 
-## 9. IronClaw Agent Integration
+## 10. IronClaw Agent Integration
 
-The Inspector is designed to be called as a **tool** by an IronClaw agent:
+Both modules are designed to be called as **tools** by an IronClaw (NEAR AI) agent:
 
 ```
-User: "Analyze this CSV and tell me what's interesting."
+User: "Clean this CSV for me — impute missing values and encode categoricals."
 
-Agent → Tool Call:
-    inspector = Inspector()
-    report = inspector.run_json(data, headers)
+Agent → Tool Call (EDA):
+    report = Inspector().run(data, headers)
+    type_map = {ct["name"]: ct["inferred_type"] for ct in report.to_dict()["column_types"]}
+
+Agent → Tool Call (Preprocessing):
+    result = Cleaner(CleanerConfig(...)).run(data, headers, type_map=type_map)
 
 Agent → Response:
-    "I found 6 columns: 3 numerical, 1 categorical, 2 boolean.
-     The 'age' and 'experience' columns are highly correlated (r=0.95) —
-     you may want to drop one. The 'salary' column has 2 outliers
-     (one at $999,999 and one at -$5,000). I also see 10 missing
-     values in the 'age' column (5%)."
+    "Done. I filled 3 missing values using the column mean, standardised 3
+     numerical columns, and one-hot encoded 'dept' into 4 indicator columns.
+     The output has 9 columns (up from 5). Full audit in the JSON report."
 ```
 
-The JSON report is designed to be:
+The JSON reports are designed to be:
 1. **Machine-parseable** — structured keys, consistent types.
 2. **Agent-explainable** — warnings are written in natural language.
-3. **Deterministic** — same input always produces same output.
+3. **Deterministic** — same input always produces the same output.
 
 ---
 
-*GlassBox-AutoML v0.1.0 — Module I: Automated EDA (The Inspector)*
+*GlassBox-AutoML v0.2.0 — Module I: Automated EDA (The Inspector) · Module II: Automated Preprocessing (The Cleaner)*
