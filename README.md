@@ -1,4 +1,4 @@
-# GlassBox-AutoML · Module I: Automated EDA + Module II: Preprocessing
+# GlassBox-AutoML · Module I: Automated EDA + Module II: Preprocessing + Module IV: Optimization
 
 ## Complete Technical Documentation
 
@@ -21,11 +21,17 @@
    - 5.2 [Scalers](#52-scalers)
    - 5.3 [Encoders](#53-encoders)
    - 5.4 [Cleaner Orchestrator](#54-cleaner-orchestrator)
-6. [Usage Examples](#6-usage-examples)
-7. [JSON Report Schemas](#7-json-report-schemas)
-8. [Testing](#8-testing)
-9. [Design Decisions](#9-design-decisions)
-10. [IronClaw Agent Integration](#10-ironclaw-agent-integration)
+6. [Module IV — Optimization (The Orchestrator)](#6-module-iv--optimization-the-orchestrator)
+   - 6.1 [KFold Splitter](#61-kfold-splitter)
+   - 6.2 [Scoring Metrics](#62-scoring-metrics)
+   - 6.3 [Grid Search](#63-grid-search)
+   - 6.4 [Random Search](#64-random-search)
+   - 6.5 [Orchestrator](#65-orchestrator)
+7. [Usage Examples](#7-usage-examples)
+8. [JSON Report Schemas](#8-json-report-schemas)
+9. [Testing](#9-testing)
+10. [Design Decisions](#10-design-decisions)
+11. [IronClaw Agent Integration](#11-ironclaw-agent-integration)
 
 ---
 
@@ -38,6 +44,7 @@ Every formula is implemented from scratch — no Scikit-Learn, no Pandas.
 | ------ | ----- | ---- |
 | **Module I** | `Inspector` | Non-destructive audit of raw data → JSON EDA report |
 | **Module II** | `Cleaner` | Automated preprocessing → cleaned array + JSON audit trail |
+| **Module IV** | `Orchestrator` | Hyperparameter search (Grid / Random) via K-fold CV → JSON optimization report |
 
 ### Key Principles
 
@@ -53,8 +60,9 @@ Every formula is implemented from scratch — no Scikit-Learn, no Pandas.
 
 ```
 Raw Data
-  ──► Inspector (EDA) ──► EDAReport (JSON)
+  ──► Inspector (EDA)         ──► EDAReport (JSON)
   ──► Cleaner (Preprocessing) ──► Cleaned Array + PreprocessingReport (JSON)
+  ──► Orchestrator (Phase IV) ──► Best Params + OptimizationReport (JSON)
 ```
 
 ---
@@ -75,8 +83,15 @@ GlassBox-AutoML-Agent/
 │   ├── scalers.py           # MinMaxScaler + StandardScaler
 │   ├── encoders.py          # OneHotEncoder + LabelEncoder
 │   └── cleaner.py           # Preprocessing orchestrator → CleanerResult
+├── optimization/
+│   ├── kfold.py             # KFoldSplitter + cross_val_score
+│   ├── scoring.py           # Evaluation metrics from scratch (accuracy, MSE, R², …)
+│   ├── grid_search.py       # GridSearch — exhaustive Cartesian-product search
+│   ├── random_search.py     # RandomSearch — stochastic sampling + time budget
+│   └── orchestrator.py      # Optimization orchestrator → OptimizationReport
 ├── demo_eda.py              # End-to-end EDA demo
 ├── demo_preprocessing.py    # End-to-end preprocessing demo
+├── demo_optimization.py     # End-to-end optimization demo
 └── pyproject.toml
 ```
 
@@ -464,7 +479,253 @@ Methods: `to_dict()`, `to_json()`
 
 ---
 
-## 6. Usage Examples
+## 6. Module IV — Optimization (The Orchestrator)
+
+The Optimization module implements Phase IV of the GlassBox pipeline: automated hyperparameter search with K-fold cross-validation. It mirrors the architecture of the Inspector and Cleaner — a single `run()` call chains all sub-components and returns a JSON-serialisable `OptimizationReport`.
+
+It is designed to work with **any estimator** that satisfies a two-method contract:
+
+```python
+model = MyEstimator(**hyperparams)
+model.fit(X_train, y_train)     # X, y are NumPy arrays
+y_pred = model.predict(X_val)   # returns NumPy array
+```
+
+This means it will plug directly into the Phase III Algorithm Zoo models once they are available.
+
+### 6.1 KFold Splitter
+
+**File:** `optimization/kfold.py`
+
+Splits a dataset of *n* samples into K non-overlapping folds. The last fold receives any remainder samples.
+
+$$\text{fold\_size}_i = \lfloor n / K \rfloor + \mathbf{1}[i < n \bmod K]$$
+
+#### Class: `KFoldSplitter`
+
+```python
+KFoldSplitter(n_splits=5, shuffle=True, random_state=None)
+```
+
+| Method | Returns | Description |
+| ------ | ------- | ----------- |
+| `split(X, y=None)` | `Iterator[(train_idx, val_idx)]` | Yields index arrays for each fold |
+| `get_n_splits()` | `int` | Number of configured folds |
+| `get_fold_info(X)` | `List[FoldSplit]` | Metadata without yielding data |
+
+#### Standalone helper: `cross_val_score`
+
+```python
+from glassbox.optimization.kfold import cross_val_score
+
+scores = cross_val_score(
+    MyModel, X, y,
+    scoring_fn=accuracy_score,
+    params={"max_depth": 5},
+    cv=5,
+    random_state=42,
+)
+# → np.ndarray of shape (5,)  — one score per fold
+print(f"{scores.mean():.4f} ± {scores.std():.4f}")
+```
+
+---
+
+### 6.2 Scoring Metrics
+
+**File:** `optimization/scoring.py`
+
+All metrics implemented from scratch using NumPy. Every function signature is `metric(y_true, y_pred) -> float` — higher is always considered better by the search strategies. Use the negated variants for error metrics.
+
+#### Classification
+
+| Function | Formula | Notes |
+| -------- | ------- | ----- |
+| `accuracy_score(y_true, y_pred)` | $\frac{1}{n}\sum\mathbf{1}[y_i = \hat{y}_i]$ | |
+| `precision_score(y_true, y_pred, pos_label=1)` | $\frac{TP}{TP+FP}$ | Returns 0.0 if no positive predictions |
+| `recall_score(y_true, y_pred, pos_label=1)` | $\frac{TP}{TP+FN}$ | Returns 0.0 if no positive ground-truth |
+| `f1_score(y_true, y_pred, pos_label=1)` | $\frac{2 \cdot P \cdot R}{P+R}$ | Harmonic mean of precision and recall |
+| `confusion_matrix(y_true, y_pred)` | K×K count matrix | Rows = true, columns = predicted |
+
+#### Regression
+
+| Function | Formula | Notes |
+| -------- | ------- | ----- |
+| `mean_squared_error(y_true, y_pred)` | $\frac{1}{n}\sum(y_i - \hat{y}_i)^2$ | |
+| `mean_absolute_error(y_true, y_pred)` | $\frac{1}{n}\sum|y_i - \hat{y}_i|$ | |
+| `r2_score(y_true, y_pred)` | $1 - \frac{SS_{res}}{SS_{tot}}$ | 1.0 = perfect, 0.0 = mean predictor |
+| `neg_mean_squared_error(y_true, y_pred)` | $-\text{MSE}$ | Use with search strategies |
+| `neg_mean_absolute_error(y_true, y_pred)` | $-\text{MAE}$ | Use with search strategies |
+
+---
+
+### 6.3 Grid Search
+
+**File:** `optimization/grid_search.py`
+
+Evaluates every combination in the Cartesian product of `param_grid`. Results are sorted by mean CV score descending. Failed candidates (estimator exceptions) are recorded with their error message rather than crashing the search.
+
+#### Class: `GridSearch`
+
+```python
+GridSearch(
+    scoring_fn,           # callable — higher is better
+    cv=5,                 # number of folds
+    shuffle=True,
+    random_state=None,
+    verbose=False,
+)
+```
+
+| Method | Returns | Description |
+| ------ | ------- | ----------- |
+| `fit(X, y, estimator_class, param_grid)` | `GridSearchResult` | Run the full grid search |
+| `best_params_` | `dict` | Best combination (after `fit`) |
+| `best_score_` | `float` | Mean CV score of the best combination |
+
+#### Dataclass: `GridSearchResult`
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `best_params` | `dict` | Winning hyperparameter combination |
+| `best_score` | `float` | Mean CV score of the winner |
+| `n_candidates` | `int` | Total combinations evaluated |
+| `n_splits` | `int` | Number of folds |
+| `elapsed_seconds` | `float` | Total wall-clock time |
+| `all_results` | `List[CVResult]` | Per-combination results, sorted best-first |
+
+#### Dataclass: `CVResult`
+
+| Field | Description |
+| ----- | ----------- |
+| `params` | The hyperparameter combination |
+| `fold_scores` | Score per fold (`nan` on failure) |
+| `mean_score` | NaN-safe mean |
+| `std_score` | NaN-safe standard deviation |
+| `error` | Exception message if any fold failed, else `None` |
+
+---
+
+### 6.4 Random Search
+
+**File:** `optimization/random_search.py`
+
+Samples `n_iter` random combinations from `param_distributions` and evaluates each with K-fold CV. Supports a `time_budget` (seconds) to stop the search early — useful for the 120-second AutoML target in the project spec.
+
+#### Parameter Distribution Specification
+
+| Format | Behaviour | Example |
+| ------ | --------- | ------- |
+| `list` | Discrete uniform — one element picked at random | `"max_depth": [3, 5, 10, 20]` |
+| `(low, high)` | Continuous uniform $U[\text{low}, \text{high}]$ | `"dropout": (0.1, 0.5)` |
+| `(low, high, "log")` | Log-uniform — for parameters spanning orders of magnitude | `"lr": (1e-4, 0.1, "log")` |
+
+#### Class: `RandomSearch`
+
+```python
+RandomSearch(
+    scoring_fn,           # callable — higher is better
+    cv=5,
+    n_iter=20,            # number of random combinations to try
+    time_budget=None,     # stop early after this many seconds
+    shuffle=True,
+    random_state=None,
+    verbose=False,
+)
+```
+
+| Method | Returns | Description |
+| ------ | ------- | ----------- |
+| `fit(X, y, estimator_class, param_distributions)` | `RandomSearchResult` | Run the random search |
+| `best_params_` | `dict` | Best combination found |
+| `best_score_` | `float` | Mean CV score of the best combination |
+
+#### Dataclass: `RandomSearchResult`
+
+Same fields as `GridSearchResult`, plus:
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `n_iter` | `int` | Iterations actually completed (≤ requested `n_iter`) |
+| `time_budget_hit` | `bool` | `True` if the search stopped early |
+
+---
+
+### 6.5 Orchestrator
+
+**File:** `optimization/orchestrator.py`
+
+The unified entry point — equivalent to `Inspector` (Phase I) and `Cleaner` (Phase II). A single `run()` call dispatches to the correct search strategy and returns an `OptimizationReport`.
+
+#### Class: `OrchestratorConfig`
+
+| Parameter | Default | Description |
+| --------- | ------- | ----------- |
+| `search_type` | `"grid"` | `"grid"` (exhaustive) or `"random"` (stochastic) |
+| `cv` | `5` | Number of cross-validation folds |
+| `n_iter` | `20` | Iterations for RandomSearch (ignored for GridSearch) |
+| `time_budget` | `None` | Wall-clock limit in seconds for RandomSearch |
+| `shuffle` | `True` | Shuffle samples before forming folds |
+| `random_state` | `None` | Reproducibility seed |
+| `verbose` | `False` | Print per-candidate progress |
+
+#### Class: `Orchestrator`
+
+```python
+from glassbox.optimization.orchestrator import Orchestrator, OrchestratorConfig
+
+config = OrchestratorConfig(search_type="grid", cv=5, random_state=42)
+orch = Orchestrator(config)
+
+report = orch.run(
+    X, y,
+    estimator_class=MyModel,
+    param_grid={"max_depth": [3, 5, 10]},
+    scoring_fn=accuracy_score,
+)
+print(report.to_json())
+```
+
+| Method | Returns | Description |
+| ------ | ------- | ----------- |
+| `run(X, y, estimator_class, param_grid, scoring_fn)` | `OptimizationReport` | Run the full search pipeline |
+| `fold_info(X)` | `List[dict]` | Preview fold layout without running a search |
+
+#### Dataclass: `OptimizationReport`
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `search_type` | `str` | `"grid"` or `"random"` |
+| `best_params` | `dict` | Winning hyperparameters |
+| `best_score` | `float` | Mean CV score of the winner |
+| `n_candidates_evaluated` | `int` | Combinations actually evaluated |
+| `n_splits` | `int` | Number of CV folds |
+| `elapsed_seconds` | `float` | Total wall-clock time |
+| `scoring_fn_name` | `str` | Name of the scoring function |
+| `time_budget_hit` | `bool` | Early stop due to time budget |
+| `all_results` | `List[dict]` | Full per-candidate audit trail |
+| `warnings` | `List[str]` | Failed candidates, early-stop notices |
+
+Methods: `to_dict()`, `to_json()`
+
+#### Pipeline Steps
+
+```
+Step 1: OrchestratorConfig validation
+Step 2: GridSearch / RandomSearch.fit()
+        └─ For each candidate combination:
+               KFoldSplitter.split() → K folds
+               estimator.fit(X_train, y_train) + .predict(X_val)
+               scoring_fn(y_val, y_pred) → fold score
+           → CVResult (mean, std, fold scores, errors)
+Step 3: Rank all CVResults by mean_score descending
+Step 4: Surface warnings (failed candidates, time budget)
+Step 5: Assemble OptimizationReport → .to_json()
+```
+
+---
+
+## 7. Usage Examples
 
 ### Minimal EDA
 
@@ -545,9 +806,84 @@ encoder = OneHotEncoder(drop_first=True)
 data_enc, new_headers, enc_summaries = encoder.fit_transform(data_scaled, headers)
 ```
 
+### Grid Search (Classification)
+
+```python
+import numpy as np
+from glassbox.optimization.grid_search import GridSearch
+from glassbox.optimization.scoring import accuracy_score
+
+# MyClassifier must implement fit(X, y) and predict(X).
+gs = GridSearch(scoring_fn=accuracy_score, cv=5, random_state=42)
+result = gs.fit(
+    X, y,
+    estimator_class=MyClassifier,
+    param_grid={
+        "max_depth": [3, 5, 10],
+        "min_samples": [2, 5],
+    },
+)
+print(result.best_params)   # {"max_depth": 5, "min_samples": 2}
+print(result.best_score)    # 0.9350
+```
+
+### Random Search (Regression, with time budget)
+
+```python
+from glassbox.optimization.random_search import RandomSearch
+from glassbox.optimization.scoring import neg_mean_squared_error
+
+rs = RandomSearch(
+    scoring_fn=neg_mean_squared_error,
+    cv=5,
+    n_iter=50,
+    time_budget=30.0,    # stop after 30 s
+    random_state=0,
+)
+result = rs.fit(
+    X, y,
+    estimator_class=MyRegressor,
+    param_distributions={
+        "max_depth":    [3, 5, 10, 20],           # discrete list
+        "learning_rate": (0.001, 0.5, "log"),     # log-uniform
+        "n_estimators":  (50, 500),               # continuous uniform
+    },
+)
+print(result.best_params)
+print(f"Best MSE ≈ {-result.best_score:.4f}")
+```
+
+### Full Pipeline (EDA → Preprocessing → Optimization)
+
+```python
+import numpy as np
+from glassbox.eda.inspector import Inspector
+from glassbox.preprocessing.cleaner import Cleaner, CleanerConfig
+from glassbox.optimization.orchestrator import Orchestrator, OrchestratorConfig
+from glassbox.optimization.scoring import accuracy_score
+
+# 1. EDA
+inspector = Inspector()
+eda_report = inspector.run(data, headers)
+type_map = {ct["name"]: ct["inferred_type"] for ct in eda_report.to_dict()["column_types"]}
+
+# 2. Preprocessing → clean float matrix
+result = Cleaner(CleanerConfig(scaler_type="standard", encoder_type="label")).run(
+    data, headers, type_map=type_map
+)
+X = result.data[:, :-1].astype(float)   # features
+y = result.data[:, -1].astype(int)      # target
+
+# 3. Hyperparameter search
+config = OrchestratorConfig(search_type="grid", cv=5, random_state=42)
+orch = Orchestrator(config)
+report = orch.run(X, y, MyClassifier, {"max_depth": [3, 5, 10]}, accuracy_score)
+print(report.to_json())
+```
+
 ---
 
-## 7. JSON Report Schemas
+## 8. JSON Report Schemas
 
 ### EDA Report (`EDAReport.to_json()`)
 
@@ -607,9 +943,45 @@ data_enc, new_headers, enc_summaries = encoder.fit_transform(data_scaled, header
 }
 ```
 
+### Optimization Report (`OptimizationReport.to_json()`)
+
+```json
+{
+  "metadata": {
+    "search_type": "grid",
+    "n_candidates_evaluated": 6,
+    "n_splits": 5,
+    "elapsed_seconds": 0.412,
+    "scoring_fn": "accuracy_score",
+    "time_budget_hit": false
+  },
+  "best_params": { "max_depth": 5, "min_samples": 2 },
+  "best_score": 0.935,
+  "all_results": [
+    {
+      "params": { "max_depth": 5, "min_samples": 2 },
+      "fold_scores": [0.925, 0.95, 0.925, 0.95, 0.925],
+      "mean_score": 0.935,
+      "std_score": 0.012,
+      "elapsed_seconds": 0.068,
+      "error": null
+    },
+    {
+      "params": { "max_depth": 3, "min_samples": 2 },
+      "fold_scores": [0.9, 0.925, 0.9, 0.925, 0.9],
+      "mean_score": 0.91,
+      "std_score": 0.012,
+      "elapsed_seconds": 0.061,
+      "error": null
+    }
+  ],
+  "warnings": []
+}
+```
+
 ---
 
-## 8. Testing
+## 9. Testing
 
 ```bash
 pytest                                      # all tests
@@ -625,10 +997,15 @@ pytest tests/test_inspector.py -v           # single file
 | `test_correlation.py` | `correlation` | Perfect/zero correlation, flagging |
 | `test_outliers.py` | `outliers` | Detection, capping, k values |
 | `test_inspector.py` | `inspector` | Full EDA pipeline, JSON output |
+| `test_kfold.py` | `kfold` | Fold sizes, no data leakage, shuffle reproducibility |
+| `test_scoring.py` | `scoring` | All metrics vs known values, edge cases |
+| `test_grid_search.py` | `grid_search` | Best-param selection, error handling, JSON output |
+| `test_random_search.py` | `random_search` | Discrete/continuous/log-uniform sampling, time budget |
+| `test_orchestrator.py` | `orchestrator` | Full pipeline, both search types, report schema |
 
 ---
 
-## 9. Design Decisions
+## 10. Design Decisions
 
 **Why NumPy only?** Pandas and Scikit-Learn are not WASM-compatible in all environments. NumPy compiles cleanly via Pyodide, keeps memory footprint minimal, and avoids hidden type-coercion surprises.
 
@@ -640,9 +1017,17 @@ pytest tests/test_inspector.py -v           # single file
 
 **OHE column expansion:** One-Hot Encoding increases the column count. `CleanerResult.headers` always reflects the actual output columns, and `PreprocessingReport` records both `headers_in` and `headers_out` for full traceability.
 
+**Maximisation convention in search:** Both GridSearch and RandomSearch always *maximise* the scoring function. Error metrics (MSE, MAE) are wrapped with `neg_*` variants so the convention is consistent regardless of task type. This eliminates a common source of bugs in AutoML pipelines.
+
+**Random Search log-uniform sampling:** Hyperparameters like learning rate span several orders of magnitude. Sampling linearly would concentrate draws near the upper bound. Log-uniform sampling (`(low, high, "log")`) ensures equal probability of sampling from each order of magnitude: $\text{value} = e^{\mathcal{U}[\ln(\text{low}),\; \ln(\text{high})]}$.
+
+**Time budget for agent efficiency:** The project spec requires end-to-end search to complete in < 120 seconds. `RandomSearch.time_budget` enforces this at the search level, stopping after the budget expires and returning the best result found so far.
+
+**Shared `_cross_validate` primitive:** The inner K-fold loop is extracted into a module-level function shared by both GridSearch and RandomSearch. This avoids code duplication and ensures both strategies produce identically structured `CVResult` objects.
+
 ---
 
-## 10. IronClaw Agent Integration
+## 11. IronClaw Agent Integration
 
 Both modules are designed to be called as **tools** by an IronClaw (NEAR AI) agent:
 
@@ -669,4 +1054,4 @@ The JSON reports are designed to be:
 
 ---
 
-*GlassBox-AutoML v0.2.0 — Module I: Automated EDA (The Inspector) · Module II: Automated Preprocessing (The Cleaner)*
+*GlassBox-AutoML v0.3.0 — Module I: Automated EDA (The Inspector) · Module II: Automated Preprocessing (The Cleaner) · Module IV: Hyperparameter Optimization (The Orchestrator)*
