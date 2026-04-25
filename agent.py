@@ -150,6 +150,13 @@ def run(env) -> None:
             )
         cls = _FastAutoFit if sampled else AutoFit
         report = cls(config=config).run_csv(csv_string, target_col=target_col)
+        # Store on env so chat.py can render the HTML report
+        try:
+            env._autofit_report  = report
+            env._autofit_source  = csv_source
+            env._autofit_n_total = n_total
+        except Exception:
+            pass
         env.add_reply(_format_reply(report))
 
     except Exception as exc:
@@ -362,12 +369,28 @@ def _extract_target(user_text: str, headers: list[str]) -> Optional[str]:
 # Reply formatting
 # ---------------------------------------------------------------------------
 
+def _display_score(raw_score, metric: str):
+    """Convert internal scorer value to a human-readable string.
+
+    neg_mean_squared_error stores negative MSE; show positive RMSE instead.
+    """
+    import math
+    if raw_score != raw_score:  # nan
+        return "N/A"
+    if metric == "neg_mse":
+        rmse = math.sqrt(abs(raw_score))
+        return f"{rmse:.4f}"
+    return f"{raw_score:.4f}"
+
+
+def _score_label(metric: str) -> str:
+    return "RMSE" if metric == "neg_mse" else metric
+
+
 def _format_reply(report: AutoFitReport) -> str:
-    score_str = (
-        f"{report.best_score:.4f}"
-        if report.best_score == report.best_score  # nan check
-        else "N/A"
-    )
+    metric = report.scoring_metric
+    score_str = _display_score(report.best_score, metric)
+    label = _score_label(metric)
 
     lines = [
         "## GlassBox AutoFit — Results",
@@ -378,7 +401,7 @@ def _format_reply(report: AutoFitReport) -> str:
         f"| Target | `{report.target_column}` |",
         f"| Dataset | {report.n_rows} rows × {report.n_features_in} features |",
         f"| Best model | **{report.best_model}** |",
-        f"| CV score ({report.scoring_metric}) | **{score_str}** |",
+        f"| CV score ({label}) | **{score_str}** |",
         f"| Time | {report.elapsed_seconds:.2f}s |",
         "",
     ]
@@ -400,11 +423,11 @@ def _format_reply(report: AutoFitReport) -> str:
         ]
 
     # Model rankings table
-    lines += ["**All model rankings:**", ""]
-    lines.append("| Model | CV Score |")
+    lines += [f"**All model rankings:** (lower {label} = better)" if metric == "neg_mse" else "**All model rankings:**", ""]
+    lines.append(f"| Model | CV {label} |")
     lines.append("|---|---|")
     for r in report.model_rankings:
-        sc = f"{r['best_score']:.4f}" if r.get("best_score") is not None else "failed"
+        sc = _display_score(r["best_score"], metric) if r.get("best_score") is not None else "failed"
         medal = " 🥇" if r["model"] == report.best_model else ""
         lines.append(f"| {r['model']}{medal} | {sc} |")
 
