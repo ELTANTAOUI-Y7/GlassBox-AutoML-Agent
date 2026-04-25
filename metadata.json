@@ -1,0 +1,23 @@
+{
+  "name": "glassbox-autofit",
+  "version": "0.1.0",
+  "description": "White-box AutoML: upload a CSV, name the target column, and I'll run EDA → Preprocessing → Model Selection → Hyperparameter Search and return the best model with a full explainability report.",
+  "category": "agent",
+  "tags": [
+    "automl",
+    "machine-learning",
+    "classification",
+    "regression",
+    "data-science",
+    "explainable-ai",
+    "numpy"
+  ],
+  "details": {
+    "agent": {
+      "framework": "base",
+      "welcome_title": "GlassBox AutoFit",
+      "welcome_description": "Upload a CSV file and tell me which column to predict. I'll handle everything: data inspection, cleaning, model selection, and hyperparameter tuning — all with NumPy, no black-box libraries."
+    }
+  },
+  "show_entry": true
+}
