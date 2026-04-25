@@ -18,3 +18,4 @@ __author__ = "GlassBox-AutoML Team"
 from glassbox.eda.inspector import Inspector
 from glassbox.preprocessing.cleaner import Cleaner, CleanerConfig, PreprocessingReport
 from glassbox.optimization.orchestrator import Orchestrator, OrchestratorConfig, OptimizationReport
+from glassbox.agent.autofit import AutoFit, AutoFitConfig, AutoFitReport
