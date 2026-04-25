@@ -26,12 +26,19 @@ $SSH $HOST "
   rm -rf glassbox_new
   mkdir glassbox_new
   tar -xzf glassbox_deploy.tar.gz -C glassbox_new
+  # carry the venv over from the existing install
+  if [ -d glassbox/.venv ]; then
+    mv glassbox/.venv glassbox_new/.venv
+  fi
   # swap atomically
   rm -rf glassbox_old
   mv glassbox glassbox_old 2>/dev/null || true
   mv glassbox_new glassbox
   # reinstall package in-place (keeps existing venv)
   cd glassbox
+  if [ ! -d .venv ]; then
+    python3 -m venv .venv
+  fi
   .venv/bin/pip install -e . --quiet
   echo 'Deploy done.'
 "
