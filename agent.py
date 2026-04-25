@@ -36,6 +36,27 @@ from glassbox.agent.autofit import AutoFit, AutoFitConfig, AutoFitReport
 
 
 # ---------------------------------------------------------------------------
+# Lean candidate set — drops KNN (O(n²) distance, too slow on large data)
+# and caps RandomForest trees.  Used whenever n_rows > _SAMPLE_LIMIT.
+# ---------------------------------------------------------------------------
+
+class _FastAutoFit(AutoFit):
+    def _get_candidates(self, task):
+        return [
+            (name, cls, grid)
+            for name, cls, grid in super()._get_candidates(task)
+            if name != "KNN"
+            and (name != "RandomForest" or self._patch_rf(grid))
+        ]
+
+    @staticmethod
+    def _patch_rf(grid: dict) -> bool:
+        if "n_trees" in grid:
+            grid["n_trees"] = [t for t in grid["n_trees"] if t <= 20]
+        return True
+
+
+# ---------------------------------------------------------------------------
 # IronClaw / NEAR AI entry point
 # ---------------------------------------------------------------------------
 
@@ -91,19 +112,33 @@ def run(env) -> None:
     # ------------------------------------------------------------------ #
     # 3.  Run AutoFit pipeline                                             #
     # ------------------------------------------------------------------ #
-    env.add_reply(
+    csv_string, n_total, n_used = _sample_csv(csv_string, max_rows=2000)
+    sampled = n_used < n_total
+
+    status = (
         f"Running GlassBox AutoFit on `{csv_source}` → predicting **{target_col}** …\n"
-        "(EDA → Cleaning → Hyperparameter Search — this may take a few seconds)"
+        f"Dataset: {n_total} rows — using {n_used} rows for search (random sample, seed 42)."
+        if sampled else
+        f"Running GlassBox AutoFit on `{csv_source}` → predicting **{target_col}** …"
     )
+    env.add_reply(status)
 
     try:
+        csv_string, dropped_cols = _drop_id_columns(csv_string, target_col)
+        if dropped_cols:
+            env.add_reply(
+                f"Dropped high-cardinality columns (likely IDs, not useful as features): "
+                + ", ".join(f"`{c}`" for c in dropped_cols)
+            )
+
         config = AutoFitConfig(
             search_type="random",
-            cv=5,
-            n_iter=15,
+            cv=3,
+            n_iter=8,
             random_state=42,
         )
-        report = AutoFit(config=config).run_csv(csv_string, target_col=target_col)
+        cls = _FastAutoFit if sampled else AutoFit
+        report = cls(config=config).run_csv(csv_string, target_col=target_col)
         env.add_reply(_format_reply(report))
 
     except Exception as exc:
@@ -113,6 +148,71 @@ def run(env) -> None:
             "<details><summary>Traceback</summary>\n\n"
             f"```\n{tb}\n```\n</details>"
         )
+
+
+# ---------------------------------------------------------------------------
+# CSV sampling
+# ---------------------------------------------------------------------------
+
+def _sample_csv(csv_string: str, max_rows: int) -> Tuple[str, int, int]:
+    """Return (csv_string, n_total, n_used). Randomly samples if n_total > max_rows."""
+    import random
+    lines = csv_string.strip().splitlines()
+    header, data = lines[0], lines[1:]
+    n_total = len(data)
+    if n_total <= max_rows:
+        return csv_string, n_total, n_total
+    random.seed(42)
+    sampled = random.sample(data, max_rows)
+    return header + "\n" + "\n".join(sampled), n_total, max_rows
+
+
+# ---------------------------------------------------------------------------
+# ID-column removal
+# ---------------------------------------------------------------------------
+
+def _drop_id_columns(csv_string: str, target_col: str) -> Tuple[str, list]:
+    """Drop columns whose values are almost entirely unique (ID columns).
+
+    A column is treated as an ID if:
+    - it is not the target, AND
+    - it cannot be parsed as numbers, AND
+    - unique value ratio > 0.9 (>90% of rows have a distinct value)
+
+    Returns the cleaned CSV string and the list of dropped column names.
+    """
+    lines = csv_string.strip().splitlines()
+    headers = [h.strip().strip('"').strip("'") for h in lines[0].split(",")]
+    rows = [line.split(",") for line in lines[1:]]
+    n_rows = len(rows)
+    if n_rows == 0:
+        return csv_string, []
+
+    drop_indices = set()
+    dropped_names = []
+
+    for col_idx, col_name in enumerate(headers):
+        if col_name == target_col:
+            continue
+        values = [rows[r][col_idx].strip() if col_idx < len(rows[r]) else "" for r in range(n_rows)]
+        # Skip if numeric
+        try:
+            [float(v) for v in values if v]
+            continue
+        except ValueError:
+            pass
+        # Drop if >90% unique
+        if len(set(values)) / max(n_rows, 1) > 0.9:
+            drop_indices.add(col_idx)
+            dropped_names.append(col_name)
+
+    if not drop_indices:
+        return csv_string, []
+
+    keep = [i for i in range(len(headers)) if i not in drop_indices]
+    new_header = ",".join(headers[i] for i in keep)
+    new_rows   = [",".join(row[i] if i < len(row) else "" for i in keep) for row in rows]
+    return new_header + "\n" + "\n".join(new_rows), dropped_names
 
 
 # ---------------------------------------------------------------------------
