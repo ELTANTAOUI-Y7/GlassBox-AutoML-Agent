@@ -52,7 +52,7 @@ class _FastAutoFit(AutoFit):
     @staticmethod
     def _patch_rf(grid: dict) -> bool:
         if "n_trees" in grid:
-            grid["n_trees"] = [t for t in grid["n_trees"] if t <= 10]
+            grid["n_trees"] = [5]
         return True
 
 
@@ -112,7 +112,9 @@ def run(env) -> None:
     # ------------------------------------------------------------------ #
     # 3.  Run AutoFit pipeline                                             #
     # ------------------------------------------------------------------ #
-    csv_string, n_total, n_used = _sample_csv(csv_string, max_rows=2000)
+    # Pure-Python models (RF, DT) are slow at scale — cap at 500 rows so each
+    # individual CV fold completes in seconds, not minutes.
+    csv_string, n_total, n_used = _sample_csv(csv_string, max_rows=500)
     sampled = n_used < n_total
 
     status = (
@@ -134,9 +136,9 @@ def run(env) -> None:
         if sampled:
             config = AutoFitConfig(
                 search_type="random",
-                cv=3,
-                n_iter=5,
-                time_budget=45,
+                cv=2,
+                n_iter=3,
+                time_budget=30,
                 random_state=42,
             )
         else:

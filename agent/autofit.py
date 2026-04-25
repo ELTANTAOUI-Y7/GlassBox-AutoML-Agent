@@ -607,9 +607,13 @@ class AutoFit:
 
         # If we can parse every value as float AND there are many unique
         # values, treat it as regression.
+        # Use whichever is smaller: absolute threshold or 30% of rows.
+        # This handles small datasets where a continuous target has fewer
+        # unique values than the absolute threshold.
         try:
             _ = [float(v) for v in non_null]
-            if len(unique_vals) > threshold:
+            effective = min(threshold, max(5, int(len(non_null) * 0.3)))
+            if len(unique_vals) > effective:
                 return "regression"
         except (ValueError, TypeError):
             pass
