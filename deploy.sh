@@ -33,7 +33,7 @@ $SSH $HOST "
   # carry over any user-uploaded CSV files (not in the repo)
   # check current dir and previous backup, so CSVs survive across deploys
   for f in glassbox/*.csv glassbox_old/*.csv; do
-    [ -f "$f" ] && cp "$f" glassbox_new/ 2>/dev/null || true
+    [ -f \"\$f\" ] && cp \"\$f\" glassbox_new/ 2>/dev/null || true
   done
   # swap atomically
   rm -rf glassbox_old
