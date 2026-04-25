@@ -31,7 +31,8 @@ $SSH $HOST "
     mv glassbox/.venv glassbox_new/.venv
   fi
   # carry over any user-uploaded CSV files (not in the repo)
-  for f in glassbox/*.csv; do
+  # check current dir and previous backup, so CSVs survive across deploys
+  for f in glassbox/*.csv glassbox_old/*.csv; do
     [ -f "$f" ] && cp "$f" glassbox_new/ 2>/dev/null || true
   done
   # swap atomically
