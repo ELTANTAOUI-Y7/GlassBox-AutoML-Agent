@@ -52,7 +52,7 @@ class _FastAutoFit(AutoFit):
     @staticmethod
     def _patch_rf(grid: dict) -> bool:
         if "n_trees" in grid:
-            grid["n_trees"] = [t for t in grid["n_trees"] if t <= 20]
+            grid["n_trees"] = [t for t in grid["n_trees"] if t <= 10]
         return True
 
 
@@ -131,12 +131,21 @@ def run(env) -> None:
                 + ", ".join(f"`{c}`" for c in dropped_cols)
             )
 
-        config = AutoFitConfig(
-            search_type="random",
-            cv=3,
-            n_iter=8,
-            random_state=42,
-        )
+        if sampled:
+            config = AutoFitConfig(
+                search_type="random",
+                cv=3,
+                n_iter=5,
+                time_budget=45,
+                random_state=42,
+            )
+        else:
+            config = AutoFitConfig(
+                search_type="random",
+                cv=3,
+                n_iter=8,
+                random_state=42,
+            )
         cls = _FastAutoFit if sampled else AutoFit
         report = cls(config=config).run_csv(csv_string, target_col=target_col)
         env.add_reply(_format_reply(report))
@@ -195,14 +204,23 @@ def _drop_id_columns(csv_string: str, target_col: str) -> Tuple[str, list]:
         if col_name == target_col:
             continue
         values = [rows[r][col_idx].strip() if col_idx < len(rows[r]) else "" for r in range(n_rows)]
-        # Skip if numeric
+        unique_ratio = len(set(values)) / max(n_rows, 1)
+        # Numeric column: only drop if values are consecutive integers (1,2,3…)
+        # — the classic row-ID pattern. Real features like Age or Price have gaps.
         try:
-            [float(v) for v in values if v]
-            continue
+            floats = [float(v) for v in values if v]
+            ints   = [int(f) for f in floats]
+            is_consecutive = (
+                all(floats[i] == ints[i] for i in range(len(floats)))  # all whole numbers
+                and len(set(ints)) == n_rows                            # all unique
+                and (max(ints) - min(ints)) == (n_rows - 1)            # no gaps
+            )
+            if not is_consecutive:
+                continue
         except ValueError:
             pass
-        # Drop if >90% unique
-        if len(set(values)) / max(n_rows, 1) > 0.9:
+        # String ID columns: drop if >90% unique
+        if unique_ratio > 0.9:
             drop_indices.add(col_idx)
             dropped_names.append(col_name)
 
